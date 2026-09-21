@@ -46,7 +46,7 @@ class Store:
                 if old in {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}:
                     db.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
             columns = {row["name"] for row in db.execute("PRAGMA table_info(puzzles)")}
-            for name in ("fen", "first_move"):
+            for name in ("fen", "first_move", "preview_file_id"):
                 if name not in columns:
                     db.execute(f"ALTER TABLE puzzles ADD COLUMN {name} TEXT")
             if not db.execute("SELECT 1 FROM sqlite_master WHERE name='scheduled_solves'").fetchone():
@@ -101,6 +101,10 @@ class Store:
         with self.connect() as db:
             db.execute("UPDATE puzzles SET fen=?, first_move=? WHERE id=?",
                        (puzzle.fen, puzzle.first_move, puzzle.id))
+
+    def cache_preview(self, identifier, file_id):
+        with self.connect() as db:
+            db.execute("UPDATE puzzles SET preview_file_id=? WHERE id=?", (file_id, identifier))
 
     def solve(self, day, difficulty, user_id, post_id, nickname=None):
         with self.connect() as db:

@@ -22,6 +22,8 @@ Keep the process running under your service manager, with this repository as its
 
 For an existing installation, add the manifest's `users:read` bot scope and reinstall the app to enable nickname lookup for ranking summaries. If lookup fails, the saved command username is used.
 
+Carousel previews require `files:write`. Add this bot scope under **OAuth & Permissions** and reinstall the Slack app before restarting the bot; update `SLACK_BOT_TOKEN` in `.env` if Slack issues a new token. Source changes take effect on restart.
+
 ## Commands
 
 Use these in the configured channel. Submissions and command status replies, including duplicate notices, are visible only to the person using the command. Puzzle posts and subscriber threads are visible to the channel.
@@ -63,7 +65,7 @@ Rating limits must be integers with `0 <= EASY_MAX_RATING < MEDIUM_MAX_RATING`.
 
 The three bins are persistent FIFO queues. At posting time, empty bins receive a random Lichess puzzle. Random selection uses Lichess's anonymous difficulty bands (`easier`, `normal`, `harder`), not strict rating cutoffs. Duplicate IDs are rejected across all bins and retained history; queued puzzles stay protected even after the retention period.
 
-Boards are static puzzle positions hosted by Lichess and displayed side by side in a horizontally scrollable Slack carousel, with difficulty and rating titles. Scroll sideways to see the remaining puzzles in narrow views. Slack crops carousel previews; click **View full board** beneath a preview to open the complete static image in a Slack popup. Beneath the boards, each difficulty has a line such as **Easy: White to move**, with the side determined from its starting position. Images do not animate solutions.
+Boards are static Lichess puzzle positions displayed side by side in a horizontally scrollable Slack carousel, with difficulty and rating titles. The bot pads each board locally to 4:3, preserving all eight ranks, then uploads the PNG to Slack. Uploaded file IDs are saved for retries. Scroll sideways in narrow views, or click **View full board** to open the original static image in a Slack popup. Beneath the boards, each difficulty shows the side to move. Images do not animate solutions.
 
 Edit [assets/daily_message.txt](assets/daily_message.txt) to customize the introduction (maximum 3,000 rendered characters). Supported Python format fields are `{date}`, `{easy_rating}`, `{medium_rating}`, and `{hard_rating}`. Use `{{` and `}}` for literal braces.
 

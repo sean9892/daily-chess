@@ -32,8 +32,10 @@ class BotTest(unittest.TestCase):
         self.store = Store(self.path, 2)
         self.lichess = Mock()
         self.lichess.get.side_effect = lambda identifier: Puzzle(identifier, 1500, chess.STARTING_FEN, "e2e4")
+        self.lichess.preview.side_effect = lambda identifier: f"PNG {identifier}".encode()
         self.slack = Mock()
         self.slack.chat_postMessage.return_value = {"ts": "123.456"}
+        self.slack.files_upload_v2.side_effect = lambda **kw: {"files": [{"id": f"F{Path(kw['filename']).stem}"}]}
         self.slack.users_info.side_effect = lambda user: {"user": {"profile": {"display_name": f"Player {user}"}}}
         self.bot = DailyChess(self.settings, self.store, self.lichess, self.slack)
 
@@ -88,7 +90,7 @@ class BotTest(unittest.TestCase):
             db.execute("DROP TABLE scheduled_solves")
             db.execute("ALTER TABLE posts RENAME COLUMN id TO day")
             db.execute("ALTER TABLE puzzles RENAME COLUMN reserved_post TO reserved_day")
-            for name in ("fen", "first_move"):
+            for name in ("fen", "first_move", "preview_file_id"):
                 db.execute(f"ALTER TABLE puzzles DROP COLUMN {name}")
         for _ in range(2):
             migrated = Store(self.path, 2)
@@ -124,8 +126,15 @@ class BotTest(unittest.TestCase):
                          "Easy: *White* to move\nMedium: *Black* to move\nHard: *White* to move")
         cards = blocks[1]["elements"]
         self.assertEqual([card["type"] for card in cards], ["card"] * 3)
-        self.assertEqual([card["hero_image"]["image_url"] for card in cards],
-                         [f"https://lichess.org/training/export/gif/thumbnail/0000{i}.gif" for i in range(3)])
+        self.assertEqual([card["hero_image"]["slack_file"] for card in cards],
+                         [{"id": f"F0000{i}"} for i in range(3)])
+        self.assertEqual([call.args[0] for call in self.lichess.preview.call_args_list],
+                         [f"0000{i}" for i in range(3)])
+        self.assertEqual([call.kwargs for call in self.slack.files_upload_v2.call_args_list], [
+            {"file": f"PNG 0000{i}".encode(), "filename": f"0000{i}.png",
+             "title": f"{difficulty.title()} · Rating {rating}"}
+            for i, (difficulty, rating) in enumerate(zip(DIFFICULTIES, (1000, 1500, 2000)))
+        ])
         for card, difficulty, rating in zip(cards, DIFFICULTIES, (1000, 1500, 2000)):
             self.assertEqual(card["title"], {"type": "plain_text", "text": f"{difficulty.title()} · Rating {rating}"})
             self.assertEqual(card["hero_image"]["type"], "image")
@@ -173,7 +182,8 @@ class BotTest(unittest.TestCase):
             self.assertEqual(view["close"], {"type": "plain_text", "text": "Close"})
             board, = view["blocks"]
             self.assertEqual(board["type"], "image")
-            self.assertEqual(board["image_url"], card["hero_image"]["image_url"])
+            self.assertEqual(board["image_url"],
+                             f"https://lichess.org/training/export/gif/thumbnail/0000{index}.gif")
             self.assertEqual(board["alt_text"], f"Starting position of puzzle 0000{index}.")
         respond.assert_not_called()
         self.lichess.get.assert_not_called()
@@ -201,10 +211,13 @@ class BotTest(unittest.TestCase):
         original_blocks = self.slack.chat_postMessage.call_args.kwargs["blocks"]
         self.assertIsNone(prepared["thread_ts"])
         self.assertFalse(self.store.has_queued("easy"))
+        self.bot = DailyChess(self.settings, Store(self.path, 2), self.lichess, self.slack)
         self.slack.chat_postMessage.side_effect = [{"ts": "123.456"}, {"ts": "124"}, RuntimeError("offline")]
         with self.assertRaises(RuntimeError):
             self.bot.tick(NOW)
         self.assertEqual(self.slack.chat_postMessage.call_args_list[1].kwargs["blocks"], original_blocks)
+        self.assertEqual(self.slack.files_upload_v2.call_count, 3)
+        self.assertEqual(self.lichess.preview.call_count, 3)
         self.assertEqual(self.store.post("2026-09-20")["notified"], 1)
         self.slack.reset_mock(side_effect=True)
         self.bot.tick(NOW)
@@ -213,6 +226,29 @@ class BotTest(unittest.TestCase):
         self.assertEqual(self.slack.chat_postMessage.call_args.kwargs["text"], json.loads(prepared["notifications"])[1])
         self.assertEqual(self.store.pending(), [])
         self.lichess.random.assert_not_called()
+
+    def test_partial_preview_uploads_resume_after_restart_without_posting_incomplete_boards(self):
+        self.fill()
+        upload = self.slack.files_upload_v2.side_effect
+        self.slack.files_upload_v2.side_effect = [{"files": [{"id": "F00000"}]}, RuntimeError("offline")]
+        with self.assertRaisesRegex(RuntimeError, "offline"):
+            self.bot.tick(NOW)
+        self.slack.chat_postMessage.assert_not_called()
+        saved = self.store.selected("2026-09-20")
+        self.assertEqual([puzzle["preview_file_id"] for puzzle in saved], ["F00000", None, None])
+        self.assertTrue(all(puzzle["used_at"] is None for puzzle in saved))
+        self.slack.files_upload_v2.reset_mock(side_effect=True)
+        self.slack.files_upload_v2.side_effect = upload
+        self.lichess.preview.reset_mock()
+        restarted = DailyChess(self.settings, Store(self.path, 2), self.lichess, self.slack)
+        restarted.tick(NOW)
+        self.assertEqual([call.args[0] for call in self.lichess.preview.call_args_list], ["00001", "00002"])
+        self.assertEqual(self.slack.files_upload_v2.call_count, 2)
+        self.slack.chat_postMessage.assert_called_once()
+        cards = self.slack.chat_postMessage.call_args.kwargs["blocks"][1]["elements"]
+        self.assertEqual([card["hero_image"]["slack_file"] for card in cards],
+                         [{"id": f"F0000{i}"} for i in range(3)])
+        self.assertEqual(self.store.pending(), [])
 
     def test_duplicates_are_skipped_and_exhaustion_does_not_post(self):
         self.fill()
@@ -313,7 +349,7 @@ class BotTest(unittest.TestCase):
             self.assertEqual(pending["thread_ts"], "123.456")
             self.assertIsNone(self.store.post("2026-09-20"))
             restarted = DailyChess(self.settings, Store(self.path, 2), self.lichess, self.slack)
-            self.slack.reset_mock(side_effect=True)
+            self.slack.chat_postMessage.reset_mock(side_effect=True)
             self.assertFalse(restarted.tick(NOW - timedelta(hours=1)))
             self.slack.chat_postMessage.assert_not_called()
             self.fill()

@@ -257,15 +257,20 @@ class DailyChess:
                 turn = self.load_puzzle(puzzle).to_move
                 turns.append(f"{puzzle['difficulty'].title()}: *{turn}* to move")
                 title = f"{puzzle['difficulty'].title()} · Rating {puzzle['rating']}"
-                # The thumbnail is a starting position; the full GIF reveals the solution.
-                image_url = f"https://lichess.org/training/export/gif/thumbnail/{puzzle['id']}.gif"
+                file_id = puzzle["preview_file_id"]
+                if not file_id:
+                    upload = self.slack.files_upload_v2(
+                        file=self.lichess.preview(puzzle["id"]), filename=f"{puzzle['id']}.png", title=title,
+                    )
+                    file_id = upload["files"][0]["id"]
+                    self.store.cache_preview(puzzle["id"], file_id)
                 cards.append({
                     "type": "card",
                     "title": {"type": "plain_text", "text": title},
                     "body": {"type": "mrkdwn", "text": f"`/daily-chess answer {puzzle['id']} <move>`"},
                     "hero_image": {
                         "type": "image",
-                        "image_url": image_url,
+                        "slack_file": {"id": file_id},
                         "alt_text": f"{title}. {turn} to move.",
                     },
                     "actions": [{

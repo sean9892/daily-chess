@@ -19,7 +19,7 @@
   },
   "oauth_config": {
     "scopes": {
-      "bot": ["chat:write", "commands", "users:read"]
+      "bot": ["chat:write", "commands", "users:read", "files:write"]
     }
   },
   "settings": {

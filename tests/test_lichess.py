@@ -9,6 +9,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 import chess
+from PIL import Image
 
 from daily_chess.lichess import Lichess, LichessError, Puzzle, puzzle_id
 
@@ -63,6 +64,38 @@ class LichessTests(unittest.TestCase):
             client.get("Ab123")
 
     @patch("daily_chess.lichess.urlopen")
+    def test_preview_preserves_every_pixel_in_a_static_four_by_three_image(self, fetch):
+        client = Lichess(timeout=3)
+        for size in (80, 81):
+            with self.subTest(size=size):
+                board = Image.new("RGB", (size, size), "gray")
+                board.paste("red", (0, 0, size, size // 8))
+                board.paste("blue", (0, size * 7 // 8, size, size))
+                source = BytesIO()
+                board.save(source, format="GIF", save_all=True,
+                           append_images=[Image.new("RGB", board.size, "green")])
+                fetch.return_value = BytesIO(source.getvalue())
+                with Image.open(BytesIO(client.preview("Ab123"))) as preview:
+                    self.assertEqual(preview.format, "PNG")
+                    self.assertFalse(getattr(preview, "is_animated", False))
+                    self.assertEqual(preview.width * 3, preview.height * 4)
+                    left, top = (preview.width - size) // 2, (preview.height - size) // 2
+                    self.assertEqual(preview.crop((left, top, left + size, top + size)).tobytes(),
+                                     board.tobytes())
+                    self.assertEqual(preview.getpixel((0, 0)), (255, 255, 255))
+        self.assertEqual(fetch.call_args.args[0].full_url,
+                         "https://lichess.org/training/export/gif/thumbnail/Ab123.gif")
+        self.assertEqual(fetch.call_args.args[0].headers["Accept"], "image/gif")
+        self.assertEqual(fetch.call_args.kwargs, {"timeout": 3})
+        fetch.return_value = BytesIO(b"not an image")
+        with self.assertRaisesRegex(LichessError, "invalid board image"):
+            client.preview("Ab123")
+        fetch.reset_mock()
+        with self.assertRaises(ValueError):
+            client.preview("https://evil.test/board.gif")
+        fetch.assert_not_called()
+
+    @patch("daily_chess.lichess.urlopen")
     @patch("daily_chess.lichess.time.monotonic", return_value=100)
     @patch("daily_chess.lichess.time.time", return_value=1000)
     def test_rate_limit_cooldown_is_shared_by_get_and_random(self, now, monotonic, fetch):
@@ -78,6 +111,8 @@ class LichessTests(unittest.TestCase):
                 monotonic.return_value = 100 + cooldown - 1
                 with self.assertRaisesRegex(LichessError, "retry in 1 seconds"):
                     client.get("Ab123")
+                with self.assertRaisesRegex(LichessError, "retry in 1 seconds"):
+                    client.preview("Ab123")
                 self.assertEqual(fetch.call_count, 1)
                 monotonic.return_value += 1
                 fetch.side_effect = None
