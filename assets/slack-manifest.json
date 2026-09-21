@@ -1,0 +1,29 @@
+{
+  "display_information": {
+    "name": "daily-chess",
+    "description": "Daily chess puzzles and private puzzle submissions"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "daily-chess",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/daily-chess",
+        "description": "Submit puzzles, answer them, and manage daily puzzle notifications",
+        "usage_hint": "answer <puzzle ID> <move> | submit <URL or ID> | post | subscribe | unsubscribe | help",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": ["chat:write", "commands", "users:read"]
+    }
+  },
+  "settings": {
+    "interactivity": {"is_enabled": true},
+    "socket_mode_enabled": true
+  }
+}

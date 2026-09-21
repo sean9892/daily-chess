@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "daily-chess"
+version = "0.1.0"
+description = "Daily Lichess puzzles and private submissions for Slack"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "slack-bolt>=1.21,<2",
+    "python-dotenv>=1,<2",
+    "chess>=1.11,<2",
+]
+
+[project.scripts]
+daily-chess = "daily_chess.bot:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
