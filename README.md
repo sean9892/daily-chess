@@ -1,77 +1,84 @@
 # daily-chess
 
-A Slack bot that posts one easy, medium, and hard Lichess puzzle as inline board images every day, then mentions subscribers in the post's thread: "It's time for daily chess!"
+A Slack bot that posts three Lichess puzzles—easy, medium, and hard—each day. Solve puzzles in Slack, contribute puzzles to the queue, and subscribe to reminders in each post's thread.
 
 ## Setup
 
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) on Linux or macOS and one long-lived process. The bot uses Python 3.11+.
+Requires Linux or macOS and [uv](https://docs.astral.sh/uv/getting-started/installation/). The bot uses Python 3.11+; the launcher installs locked dependencies automatically.
 
-1. In [Slack app settings](https://api.slack.com/apps), create an app **From a manifest** using [assets/slack-manifest.json](assets/slack-manifest.json). It enables [Socket Mode](https://docs.slack.dev/apis/events-api/using-socket-mode/) and needs no public request URL.
-2. Install the app to your workspace. Copy the **Bot User OAuth Token** (`xoxb-...`) to `SLACK_BOT_TOKEN` in `.env`.
-3. Under **Basic Information → App-Level Tokens**, generate a token with [`connections:write`](https://docs.slack.dev/reference/scopes/connections.write/). Set `SLACK_APP_TOKEN` to this `xapp-...` token.
-4. Invite `daily-chess` to the target channel. Set `SLACK_CHANNEL_ID` to its channel ID, available in the channel details.
-5. Copy `.env.example` to `.env` if none exists; otherwise merge its missing entries into your existing `.env`. Set the daily time and timezone there. An incoming webhook (`SLACK_HOOK_URL`) alone cannot support commands and is unused.
+1. From the repository root, create your configuration:
 
-Start the bot from the repository root; the launcher uses uv to create the environment and install locked dependencies automatically:
+   ```sh
+   cp .env.example .env
+   ```
 
-```sh
-./scripts/start.sh
-```
+2. In [Slack app settings](https://api.slack.com/apps), create an app **From a manifest** using [assets/slack-manifest.json](assets/slack-manifest.json). The manifest includes the required bot permissions and enables Socket Mode, so no public request URL is needed.
+3. Install the app to your workspace. Under **OAuth & Permissions**, copy the **Bot User OAuth Token** (`xoxb-...`) into `SLACK_BOT_TOKEN` in `.env`.
+4. Under **Basic Information → App-Level Tokens**, generate a token with `connections:write`. Copy this `xapp-...` token into `SLACK_APP_TOKEN`.
+5. Invite `daily-chess` to the destination channel. Copy its channel ID from the channel details into `SLACK_CHANNEL_ID`.
+6. Set `POST_TIME` and `TIMEZONE` in `.env`, then start the bot:
 
-Keep the process running under your service manager, with this repository as its working directory. Restart after changing `.env` or the message template.
+   ```sh
+   ./scripts/start.sh
+   ```
 
-For an existing installation, add the manifest's `users:read` bot scope and reinstall the app to enable nickname lookup for ranking summaries. If lookup fails, the saved command username is used.
+Keep one instance running under your service manager. Preserve the SQLite database at `DATABASE_PATH` across restarts; it stores queues, subscriptions, rankings, and delivery progress. Restart after changing `.env` or the message template.
 
-Carousel previews require `files:write`. Add this bot scope under **OAuth & Permissions** and reinstall the Slack app before restarting the bot; update `SLACK_BOT_TOKEN` in `.env` if Slack issues a new token. Source changes take effect on restart.
+## Using the bot
 
-## Commands
+Each post shows three static boards in a horizontally scrollable carousel, with ratings and the side to move. Use **View full board** to enlarge a board or **Submit answer** to enter a move.
 
-Use these in the configured channel. Submissions and command status replies, including duplicate notices, are visible only to the person using the command. Puzzle posts and subscriber threads are visible to the channel.
+Use these commands in the configured channel. Command replies and answer feedback are visible only to you.
 
-```text
-/daily-chess submit https://lichess.org/training/00008
-/daily-chess submit 00008
-/daily-chess answer 00008 Rxe7
-/daily-chess post
-/daily-chess subscribe
-/daily-chess unsubscribe
-/daily-chess help
-```
-
-`submit` validates the puzzle through Lichess and chooses its bin by rating: up to `EASY_MAX_RATING` is easy, then up to `MEDIUM_MAX_RATING` is medium, and higher ratings are hard. Subscription changes persist across restarts.
-
-`answer` checks only your first move in algebraic notation (for example `Nf3`, `Qxe5+`, `O-O`, or `e8=Q`). Each puzzle card also has a **Submit answer** button that opens an input form; results are sent privately in the channel. Correct moves earn a daily place, separately for easy, medium, and hard, across scheduled and manual posts. Each user earns one place per difficulty per day. Only places #1–#3 are announced, mentioning the solver, difficulty, and place in the original puzzle post's thread, with **Also send to channel** enabled. Later solvers still receive private confirmation. Puzzles must have been posted today; dates follow `TIMEZONE`. Rankings survive restarts, and failed announcements retry automatically.
-
-Scheduled puzzles also keep their own first three solvers per difficulty. The next day's scheduled post includes these rankings as `🥇 nickname · 🥈 nickname · 🥉 nickname`, without mentions. Manual puzzles are excluded from this summary. Only the previous calendar day's scheduled post is summarized; an unsolved difficulty displays `No solvers`.
-
-`post` publishes an independent set of three puzzles and mentions subscribers each time, before or after the scheduled post. It uses the same queues and duplicate history without checking or marking the scheduled day's completion. If manual delivery fails, run `post` again to resume the oldest unfinished manual post, including after a restart, before starting another set.
-
-## Configuration and behavior
-
-All options live in `.env`; defaults are in [.env.example](.env.example).
-
-| Option | Meaning |
+| Command | Action |
 | --- | --- |
-| `POST_TIME` | Daily local time, `HH:MM` (default `09:00`) |
-| `TIMEZONE` | IANA timezone (default `Asia/Seoul`) |
-| `HISTORY_DAYS` | Days before a posted puzzle can be reused (default `365`) |
-| `EASY_MAX_RATING` | Inclusive upper rating for easy submissions (default `1400`) |
-| `MEDIUM_MAX_RATING` | Inclusive upper rating for medium submissions (default `1800`) |
-| `DATABASE_PATH` | Persistent SQLite file |
-| `TEMPLATE_PATH` | Daily message template |
-| `FETCH_ATTEMPTS` | Maximum random puzzle attempts per empty bin |
+| `/daily-chess submit 00008` | Queue a puzzle. A Lichess training URL also works. |
+| `/daily-chess answer <id> <move>` | Submit the first move for a puzzle posted today. |
+| `/daily-chess post` | Publish an extra set of three puzzles and notify subscribers. |
+| `/daily-chess subscribe` | Get mentioned in each puzzle post's thread. |
+| `/daily-chess unsubscribe` | Stop those mentions. |
+| `/daily-chess help` | Show command help. |
 
-Rating limits must be integers with `0 <= EASY_MAX_RATING < MEDIUM_MAX_RATING`.
+Answers use algebraic notation, such as `Nf3`, `Rxe7`, `O-O`, or `e8=Q`. Only the first move is checked; you can retry an incorrect answer. The puzzle ID appears on its card, and "today" follows `TIMEZONE`.
 
-The three bins are persistent FIFO queues. At posting time, empty bins receive a random Lichess puzzle. Random selection uses Lichess's anonymous difficulty bands (`easier`, `normal`, `harder`), not strict rating cutoffs. Duplicate IDs are rejected across all bins and retained history; queued puzzles stay protected even after the retention period.
+Each user earns one daily place per difficulty across scheduled and manual posts. The first three places are announced with solver mentions in the puzzle thread and broadcast to the channel. Later solvers receive private confirmation.
 
-Boards are static Lichess puzzle positions displayed side by side in a horizontally scrollable Slack carousel, with difficulty and rating titles. The bot pads each board locally to 4:3, preserving all eight ranks, then uploads the PNG to Slack. Uploaded file IDs are saved for retries. Scroll sideways in narrow views, or click **View full board** to open the original static image in a Slack popup. Beneath the boards, each difficulty shows the side to move. Images do not animate solutions.
+Scheduled puzzles also have separate rankings: the next daily post lists the previous calendar day's first three solvers per difficulty by nickname, without mentions. This recap excludes manual puzzles and shows `No solvers` for unsolved difficulties.
 
-Edit [assets/daily_message.txt](assets/daily_message.txt) to customize the introduction (maximum 3,000 rendered characters). Supported Python format fields are `{date}`, `{easy_rating}`, `{medium_rating}`, and `{hard_rating}`. Use `{{` and `}}` for literal braces.
+## Puzzle selection and scheduling
 
-The scheduler checks every 30 seconds and posts once per local day, catching up today's post after a late restart. It retries unfinished scheduled posts only and does not backfill other missed days. Manual and scheduled delivery recover independently, though Slack rate limits are shared. SQLite records progress for restart recovery. Delivery is best effort: a timeout immediately after Slack accepts a message can cause a duplicate on retry. Run only one instance and keep the database on persistent storage.
+Submitted puzzles are checked through Lichess and queued by rating: easy up to `EASY_MAX_RATING`, medium above that through `MEDIUM_MAX_RATING`, and hard above both. Each difficulty uses its oldest queued puzzle first. Empty queues are filled with random Lichess puzzles using its `easier`, `normal`, and `harder` bands, which can fall outside the submission rating limits.
 
-Source is in `src/`, runtime data in `data/`, templates and the Slack manifest in `assets/`, and checks in `tests/`.
+Puzzles already queued or posted within `HISTORY_DAYS` cannot be added again. Scheduled and manual posts share these queues and duplicate checks.
+
+The scheduler checks every 30 seconds and posts once per local day. After downtime, it catches up today's post and retries unfinished scheduled deliveries; it does not create posts for other missed days. Failed ranking announcements also retry automatically.
+
+`/daily-chess post` adds an extra set without affecting the daily schedule. If it fails, run the command again to resume the oldest unfinished manual post, even after a restart. A timeout after Slack accepts a message can cause a duplicate on retry.
+
+## Configuration
+
+Set options in `.env`. [.env.example](.env.example) includes the required Slack values and these defaults:
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `POST_TIME` | `09:00` | Daily local time in 24-hour `HH:MM` format. |
+| `TIMEZONE` | `Asia/Seoul` | IANA timezone for scheduling and rankings. |
+| `HISTORY_DAYS` | `365` | Days before a posted puzzle can be reused. |
+| `EASY_MAX_RATING` | `1400` | Inclusive upper rating for easy submissions. |
+| `MEDIUM_MAX_RATING` | `1800` | Inclusive upper rating for medium submissions. |
+| `DATABASE_PATH` | `data/daily-chess.sqlite3` | Persistent SQLite database. |
+| `TEMPLATE_PATH` | `assets/daily_message.txt` | Post introduction template. |
+| `FETCH_ATTEMPTS` | `20` | Maximum random puzzle attempts per empty queue. |
+
+Rating limits must be integers with `0 <= EASY_MAX_RATING < MEDIUM_MAX_RATING`. `HISTORY_DAYS` and `FETCH_ATTEMPTS` must be positive integers.
+
+Edit [assets/daily_message.txt](assets/daily_message.txt) to customize the introduction. It supports `{date}`, `{easy_rating}`, `{medium_rating}`, and `{hard_rating}`; use `{{` and `}}` for literal braces. The rendered message must contain 1–3,000 characters.
+
+## Development
+
+Source lives in `src/`, runtime data in `data/`, templates and the Slack manifest in `assets/`, launch scripts in `scripts/`, and tests in `tests/`.
+
+Run the tests from the repository root:
 
 ```sh
 uv run --locked python -m unittest discover -s tests
